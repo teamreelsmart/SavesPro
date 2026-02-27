@@ -97,6 +97,13 @@ class Database:
         user = await self.col.find_one({'id': int(id)})
         return user.get('verify_issued_at') if user else None
 
+    async def reset_verify_time(self, id):
+        await self.col.update_one(
+            {'id': int(id)},
+            {'$set': {'verify_date': None, 'verify_token': None, 'verify_issued_at': None}},
+            upsert=True
+        )
+
     async def increment_verify_bypass_attempt(self, id):
         await self.col.update_one({'id': int(id)}, {'$inc': {'verify_bypass_attempts': 1}}, upsert=True)
         user = await self.col.find_one({'id': int(id)})

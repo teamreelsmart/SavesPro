@@ -13,24 +13,23 @@ from MyselfNeon.verify import get_token, check_verification
 async def verify_command_handler(bot, message):
     if await db.is_banned(message.from_user.id):
         return await message.reply(
-            "🚫 Aapne suspicious activity ki hai. Aap is bot ko use nahi kar sakte.\n\n"
-            "Unban ke liye admin ko contact karein."
+            "🚫 <b>You are blocked due to suspicious activity.</b>\n\n"
+            "<b>You cannot use this bot. Please contact admin for unban.</b>"
         )
 
     if not VERIFY:
-        return await message.reply("**__♻️ Verification is Currently Disabled.__**")
+        return await message.reply("♻️ <b>Verification is currently disabled.</b>")
 
     if await check_verification(message.from_user.id):
-        return await message.reply("✅ **__You are Already Verified for 4 Hours! Enjoy.__**")
+        return await message.reply("✅ <b>You are already verified for 4 hours.</b>")
 
-    msg = await message.reply("**__Please wait, Generating your Verification Link...__**")
+    msg = await message.reply("<b>Please wait, generating your verification link...</b>")
 
     bot_info = await bot.get_me()
     start_link = f"https://t.me/{bot_info.username}?start="
 
     try:
         verify_url = await get_token(bot, message.from_user.id, start_link)
-
         buttons = [
             [InlineKeyboardButton("🔗 Click Here To Verify", url=verify_url)],
             [InlineKeyboardButton("❓ How To Verify", url=VERIFY_TUTORIAL)],
@@ -38,12 +37,12 @@ async def verify_command_handler(bot, message):
         ]
 
         await msg.edit(
-            text="<b><i>🔐 Verification Required !</i></b>\n\n"
-                 "<i>To continue using this Bot, you must Verify your Account.</i>",
+            text="<b>🔐 Verification Required!</b>\n\n"
+                 "<b>To continue using this bot, please verify your account.</b>",
             reply_markup=InlineKeyboardMarkup(buttons)
         )
     except Exception as e:
-        await msg.edit(f"Error generating link: {e}")
+        await msg.edit(f"<b>Error generating link:</b> <code>{e}</code>")
 
 
 @Client.on_callback_query(filters.regex("verify_query"))
@@ -52,5 +51,5 @@ async def verify_callback(bot, query):
         await query.answer("You are banned from using this bot.", show_alert=True)
         return
 
-    await query.message.reply("**__Type /verify to Generate your Link !__**")
+    await query.message.reply("<b>Use /verify to generate your verification link.</b>")
     await query.answer()

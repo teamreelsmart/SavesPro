@@ -43,6 +43,10 @@ KEEP_ALIVE_URL = os.environ.get("KEEP_ALIVE_URL", "")
 # Start pic on /start 
 START_PIC = os.environ.get("START_PIC", "https://files.catbox.moe/krxuel.jpg")
 
+# Force Subscribe Channel (set 0 to disable)
+FORCE_SUB_CHANNEL = int(os.environ.get("FORCE_SUB_CHANNEL", "0"))
+FORCE_SUB_CHANNEL_URL = os.environ.get("FORCE_SUB_CHANNEL_URL", "https://t.me/your_channel")
+
 # -------------------
 # VERIFICATION CONFIG
 # -------------------

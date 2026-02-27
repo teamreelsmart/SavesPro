@@ -16,11 +16,11 @@ import random
 from datetime import datetime, timezone
 import pyrogram
 from pyrogram import Client, filters, enums
-from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated, UserAlreadyParticipant, InviteHashExpired, UsernameNotOccupied
+from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated, UserAlreadyParticipant, InviteHashExpired, UsernameNotOccupied, UserNotParticipant
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, MessageEntity
 from config import (
     API_ID, API_HASH, ERROR_MESSAGE, VERIFY_TUTORIAL, START_PIC, DUMP_CHANNEL,
-    FREE_SAVE_COOLDOWN_SECONDS, PRO_DAILY_BATCH_LIMIT
+    FREE_SAVE_COOLDOWN_SECONDS, PRO_DAILY_BATCH_LIMIT, FORCE_SUB_CHANNEL, FORCE_SUB_CHANNEL_URL
 )
 from database.db import db
 from MyselfNeon.strings import HELP_TXT
@@ -59,10 +59,34 @@ async def enforce_free_cooldown(message: Message):
 async def check_ban_and_reply(message: Message):
     if await db.is_banned(message.from_user.id):
         await message.reply_text(
-            "🚫 Aapne suspicious activity ki hai. Aap is bot ko use nahi kar sakte.\n\n"
-            "Unban ke liye admin ko contact karein."
+            "🚫 <b>You are blocked due to suspicious activity.</b>\n\n"
+            "<b>You cannot use this bot. Please contact admin for unban.</b>"
         )
         return True
+    return False
+
+async def check_force_sub(client: Client, message: Message):
+    if not FORCE_SUB_CHANNEL:
+        return True
+
+    try:
+        member = await client.get_chat_member(FORCE_SUB_CHANNEL, message.from_user.id)
+        if member.status in ("member", "administrator", "creator"):
+            return True
+    except UserNotParticipant:
+        pass
+    except Exception:
+        pass
+
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Join Channel", url=FORCE_SUB_CHANNEL_URL)],
+        [InlineKeyboardButton("✅ Joined", callback_data="force_sub_check")]
+    ])
+    await message.reply_text(
+        "<b>🔒 You must join our updates channel before using this bot.</b>",
+        reply_markup=buttons,
+        disable_web_page_preview=True
+    )
     return False
 
 
@@ -146,6 +170,9 @@ async def send_start(client: Client, message: Message):
     if await check_ban_and_reply(message):
         return
 
+    if not await check_force_sub(client, message):
+        return
+
     if not await db.is_user_exist(message.from_user.id):
         await db.add_user(
             message.from_user.id, 
@@ -169,10 +196,10 @@ async def send_start(client: Client, message: Message):
             if await check_token(user_id, token):
                 result = await process_verification_success(client, user_id, token)
                 if result.get("banned_now"):
-                    return await message.reply("🚫 Verification bypass attempt repeat hua. Aapko bot se ban kar diya gaya hai.")
+                    return await message.reply("🚫 <b>Repeated bypass detected. You are now banned from this bot.</b>")
 
                 if result.get("bypass_detected"):
-                    return await message.reply("⚠️ You try to bypass verification time. Last warning to you. Next time try kiya to aap ban ho jaoge.")
+                    return await message.reply("⚠️ <b>Verification bypass detected.</b>\n\n<b>Please verify again to continue using the bot.</b>")
                 return await message.reply("<b><i>✅ Verification Successful!</i></b>\n\n<b><i>You can now Use the Bot for 4 Hours.</i></b>")
             else:
                 return await message.reply("<b><i>❌ Invalid or Expired Token!</i></b>\n\n<b><i>Use /verify to get a new one.</b></i>")
@@ -239,7 +266,7 @@ async def send_cancel(client: Client, message: Message):
     )
 
 # --- Handle incoming messages ---
-@Client.on_message(filters.text & filters.private & ~filters.command(["start", "help", "cancel", "verify", "premium", "my_plan", "login", "logout", "login_session", "add_premium_pro", "add_premium_gold", "remove_premium", "ban", "unban"]))
+@Client.on_message(filters.text & filters.private & ~filters.command(["start", "help", "cancel", "verify", "premium", "my_plan", "login", "logout", "login_session", "add_premium_pro", "add_premium_gold", "remove_premium", "removeverifytime", "ban", "unban"]))
 async def save(client: Client, message: Message):
     if await check_ban_and_reply(message):
         return
@@ -675,6 +702,22 @@ async def button_callbacks(client: Client, callback_query):
             )
         except Exception as e:
             await client.send_message(message.chat.id, f"Error generating link: {e}")
+
+    elif data == "force_sub_check":
+        if not FORCE_SUB_CHANNEL:
+            await callback_query.answer("Force subscription is disabled.", show_alert=True)
+            return
+
+        try:
+            member = await client.get_chat_member(FORCE_SUB_CHANNEL, callback_query.from_user.id)
+            if member.status in ("member", "administrator", "creator"):
+                await callback_query.answer("✅ Subscription verified.", show_alert=False)
+                await callback_query.message.delete()
+                return
+        except Exception:
+            pass
+
+        await callback_query.answer("❌ Please join the channel first.", show_alert=True)
 
     # Help button  
     elif data == "help_btn":

@@ -14,6 +14,8 @@ from config import (
 )
 from database.db import db
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
 
 async def _fallback_short_link(link):
     """Fallback shortener (no API key required)."""
@@ -118,8 +120,8 @@ async def process_verification_success(bot, user_id, token):
                 f"**┟ Bot:** __@{bot_info.username}__\n"
                 f"**┟ User:** __{user.mention}__\n"
                 f"**┟ User ID:** `{user.id}`\n"
-                f"**┟ Date:** __{now.strftime('%d %B, %Y')}__\n"
-                f"**┖ Time:** __{now.strftime('%I:%M %p')}__"
+                f"**┟ Date:** __{now.astimezone(IST).strftime('%d %B, %Y')}__\n"
+                f"**┖ Time:** __{now.astimezone(IST).strftime('%I:%M %p IST')}__"
             )
     except Exception as e:
         print(f"Log Error: {e}")

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import (
@@ -8,10 +8,11 @@ from config import (
 )
 from database.db import db
 
+IST = timezone(timedelta(hours=5, minutes=30))
 
 BAN_TEXT = (
-    "🚫 Aapne suspicious activity ki hai. Aap is bot ko use nahi kar sakte.\n\n"
-    "Unban ke liye admin ko contact karein."
+    "🚫 <b>You are blocked due to suspicious activity.</b>\n\n"
+    "<b>You cannot use this bot. Please contact admin for unban.</b>"
 )
 
 
@@ -29,7 +30,6 @@ def premium_keyboard():
 async def premium_command(client, message):
     if await db.is_banned(message.from_user.id):
         return await message.reply_text(BAN_TEXT)
-
     await message.reply_text(PREMIUM_OVERVIEW_TEXT, reply_markup=premium_keyboard(), disable_web_page_preview=True)
 
 
@@ -39,59 +39,61 @@ async def my_plan(client, message):
         return await message.reply_text(BAN_TEXT)
 
     tier, expires_at = await db.get_active_tier(message.from_user.id)
-
     if tier == "free":
-        return await message.reply_text(
-            "🆓 <b>Your Plan: FREE</b>\n\n"
-            "Upgrade ke liye /premium use karein."
-        )
+        return await message.reply_text("🆓 <b>Your Plan: FREE</b>\n\n<b>Upgrade using /premium.</b>")
 
     now = datetime.now(timezone.utc)
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-
     remaining = expires_at - now
     total_seconds = max(0, int(remaining.total_seconds()))
-    days = total_seconds // 86400
-    hours = (total_seconds % 86400) // 3600
-    minutes = (total_seconds % 3600) // 60
 
     await message.reply_text(
         f"💎 <b>Your Plan: {tier.upper()}</b>\n"
         f"👤 <b>User ID:</b> <code>{message.from_user.id}</code>\n"
-        f"📅 <b>Expiry:</b> <code>{expires_at.strftime('%d %b %Y, %H:%M UTC')}</code>\n"
-        f"⏳ <b>Remaining:</b> <code>{days}d {hours}h {minutes}m</code>"
+        f"📅 <b>Expiry:</b> <code>{expires_at.astimezone(IST).strftime('%d %b %Y, %I:%M %p IST')}</code>\n"
+        f"⏳ <b>Remaining:</b> <code>{total_seconds // 86400}d {(total_seconds % 86400)//3600}h {(total_seconds % 3600)//60}m</code>"
     )
 
 
 @Client.on_message(filters.command(["add_premium_pro", "add_premium_gold"]) & filters.private)
 async def add_premium(client, message):
     if message.from_user.id != ADMINS:
-        return await message.reply_text("❌ Only admin can use this command.")
-
+        return await message.reply_text("❌ <b>Only admin can use this command.</b>")
     if len(message.command) != 3:
-        cmd = message.command[0]
-        return await message.reply_text(f"Usage: /{cmd} <userid> <days>")
-
+        return await message.reply_text(f"<b>Usage:</b> <code>/{message.command[0]} userid days</code>")
     try:
         user_id = int(message.command[1])
         days = int(message.command[2])
     except ValueError:
-        return await message.reply_text("❌ userid and days must be numbers.")
+        return await message.reply_text("❌ <b>User ID and days must be numeric.</b>")
 
     tier = "pro" if message.command[0] == "add_premium_pro" else "pro_gold"
     expires_at = await db.set_premium(user_id, tier, days)
-    expiry_text = expires_at.astimezone(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
-
-    await message.reply_text(f"✅ {tier.upper()} activated for `{user_id}` till {expiry_text}.")
+    expiry_text = expires_at.astimezone(IST).strftime("%d %b %Y, %I:%M %p IST")
+    await message.reply_text(f"✅ <b>{tier.upper()} activated for</b> <code>{user_id}</code> <b>till</b> <code>{expiry_text}</code>.")
 
     try:
-        await client.send_message(
-            user_id,
-            f"🎉 Your <b>{tier.upper()}</b> plan is now active.\n"
-            f"Expiry: <b>{expiry_text}</b>\n\n"
-            "Plan expiry ke baad account automatically FREE ho jayega."
-        )
+        await client.send_message(user_id, f"🎉 <b>Your {tier.upper()} plan is active.</b>\n<b>Expiry:</b> <code>{expiry_text}</code>")
+    except Exception:
+        pass
+
+
+@Client.on_message(filters.command(["removeverifytime"]) & filters.private)
+async def remove_verify_time(client, message):
+    if message.from_user.id != ADMINS:
+        return await message.reply_text("❌ <b>Only admin can use this command.</b>")
+    if len(message.command) != 2:
+        return await message.reply_text("<b>Usage:</b> <code>/removeverifytime userid</code>")
+    try:
+        user_id = int(message.command[1])
+    except ValueError:
+        return await message.reply_text("❌ <b>User ID must be numeric.</b>")
+
+    await db.reset_verify_time(user_id)
+    await message.reply_text(f"✅ <b>Verification reset for</b> <code>{user_id}</code>.")
+    try:
+        await client.send_message(user_id, "ℹ️ <b>Your verification session was reset by admin.</b>\n<b>Please verify again.</b>")
     except Exception:
         pass
 
@@ -99,41 +101,31 @@ async def add_premium(client, message):
 @Client.on_message(filters.command(["remove_premium"]) & filters.private)
 async def remove_premium(client, message):
     if message.from_user.id != ADMINS:
-        return await message.reply_text("❌ Only admin can use this command.")
-
+        return await message.reply_text("❌ <b>Only admin can use this command.</b>")
     if len(message.command) != 2:
-        return await message.reply_text("Usage: /remove_premium <userid>")
-
+        return await message.reply_text("<b>Usage:</b> <code>/remove_premium userid</code>")
     try:
         user_id = int(message.command[1])
     except ValueError:
-        return await message.reply_text("❌ userid must be number.")
+        return await message.reply_text("❌ <b>User ID must be numeric.</b>")
 
     await db.remove_premium(user_id)
-    await message.reply_text(f"✅ Premium removed for `{user_id}`.")
-
-    try:
-        await client.send_message(user_id, "ℹ️ Your premium plan has been removed by admin.")
-    except Exception:
-        pass
+    await message.reply_text(f"✅ <b>Premium removed for</b> <code>{user_id}</code>.")
 
 
 @Client.on_message(filters.command(["ban"]) & filters.private)
 async def ban_user(client, message):
     if message.from_user.id != ADMINS:
-        return await message.reply_text("❌ Only admin can use this command.")
-
+        return await message.reply_text("❌ <b>Only admin can use this command.</b>")
     if len(message.command) != 2:
-        return await message.reply_text("Usage: /ban <userid>")
-
+        return await message.reply_text("<b>Usage:</b> <code>/ban userid</code>")
     try:
         user_id = int(message.command[1])
     except ValueError:
-        return await message.reply_text("❌ userid must be number.")
+        return await message.reply_text("❌ <b>User ID must be numeric.</b>")
 
     await db.set_ban_status(user_id, True)
-    await message.reply_text(f"✅ User `{user_id}` banned.")
-
+    await message.reply_text(f"✅ <b>User banned:</b> <code>{user_id}</code>")
     try:
         await client.send_message(user_id, BAN_TEXT)
     except Exception:
@@ -143,23 +135,16 @@ async def ban_user(client, message):
 @Client.on_message(filters.command(["unban"]) & filters.private)
 async def unban_user(client, message):
     if message.from_user.id != ADMINS:
-        return await message.reply_text("❌ Only admin can use this command.")
-
+        return await message.reply_text("❌ <b>Only admin can use this command.</b>")
     if len(message.command) != 2:
-        return await message.reply_text("Usage: /unban <userid>")
-
+        return await message.reply_text("<b>Usage:</b> <code>/unban userid</code>")
     try:
         user_id = int(message.command[1])
     except ValueError:
-        return await message.reply_text("❌ userid must be number.")
+        return await message.reply_text("❌ <b>User ID must be numeric.</b>")
 
     await db.set_ban_status(user_id, False)
-    await message.reply_text(f"✅ User `{user_id}` unbanned.")
-
-    try:
-        await client.send_message(user_id, "✅ You are unbanned now. You can use bot again.")
-    except Exception:
-        pass
+    await message.reply_text(f"✅ <b>User unbanned:</b> <code>{user_id}</code>")
 
 
 @Client.on_callback_query(filters.regex("^premium_btn$"))
@@ -167,7 +152,6 @@ async def premium_btn(client, query):
     if await db.is_banned(query.from_user.id):
         await query.answer("You are banned from using this bot.", show_alert=True)
         return
-
     await query.message.edit_text(PREMIUM_OVERVIEW_TEXT, reply_markup=premium_keyboard(), disable_web_page_preview=True)
     await query.answer()
 
@@ -177,17 +161,11 @@ async def pro_btn(client, query):
     if await db.is_banned(query.from_user.id):
         await query.answer("You are banned from using this bot.", show_alert=True)
         return
-
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(PREMIUM_CONTACT_BUTTON_TEXT, url=PREMIUM_CONTACT_URL)],
         [InlineKeyboardButton("⬅️ Back To Plans", callback_data="premium_btn")]
     ])
-    await client.send_photo(
-        chat_id=query.message.chat.id,
-        photo=PRO_PLAN_QR_IMAGE,
-        caption=f"<b>{PRO_PLAN_NAME}</b>\n\n{PRO_PLAN_DETAILS}",
-        reply_markup=kb
-    )
+    await client.send_photo(query.message.chat.id, PRO_PLAN_QR_IMAGE, caption=f"<b>{PRO_PLAN_NAME}</b>\n\n{PRO_PLAN_DETAILS}", reply_markup=kb)
     await query.answer()
 
 
@@ -196,15 +174,9 @@ async def gold_btn(client, query):
     if await db.is_banned(query.from_user.id):
         await query.answer("You are banned from using this bot.", show_alert=True)
         return
-
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(PREMIUM_CONTACT_BUTTON_TEXT, url=PREMIUM_CONTACT_URL)],
         [InlineKeyboardButton("⬅️ Back To Plans", callback_data="premium_btn")]
     ])
-    await client.send_photo(
-        chat_id=query.message.chat.id,
-        photo=PRO_GOLD_PLAN_QR_IMAGE,
-        caption=f"<b>{PRO_GOLD_PLAN_NAME}</b>\n\n{PRO_GOLD_PLAN_DETAILS}",
-        reply_markup=kb
-    )
+    await client.send_photo(query.message.chat.id, PRO_GOLD_PLAN_QR_IMAGE, caption=f"<b>{PRO_GOLD_PLAN_NAME}</b>\n\n{PRO_GOLD_PLAN_DETAILS}", reply_markup=kb)
     await query.answer()
