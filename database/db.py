@@ -76,6 +76,13 @@ class Database:
         user = await self.col.find_one({'id': int(id)})
         return user.get('verify_token') if user else None
 
+    async def clear_verify_token(self, id):
+        await self.col.update_one(
+            {'id': int(id)},
+            {'$set': {'verify_token': None, 'verify_issued_at': None}},
+            upsert=True
+        )
+
     async def update_verify_date(self, id, date):
         await self.col.update_one(
             {'id': int(id)},

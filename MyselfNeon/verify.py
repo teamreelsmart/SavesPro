@@ -15,6 +15,24 @@ from config import (
 from database.db import db
 
 
+async def _fallback_short_link(link):
+    """Fallback shortener (no API key required)."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://is.gd/create.php",
+                params={"format": "simple", "url": link},
+                raise_for_status=True,
+                ssl=False
+            ) as response:
+                short_link = (await response.text()).strip()
+                if short_link.startswith("http"):
+                    return short_link
+    except Exception as e:
+        logging.error(f"Fallback Shortener Error: {e}")
+    return link
+
+
 async def get_verify_shorted_link(link):
     if VERIFY_SHORTLINK_URL == "api.shareus.io":
         url = f'https://{VERIFY_SHORTLINK_URL}/easy_api'
@@ -22,17 +40,22 @@ async def get_verify_shorted_link(link):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, params=params, raise_for_status=True, ssl=False) as response:
-                    return await response.text()
+                    shortened = (await response.text()).strip()
+                    if shortened.startswith("http"):
+                        return shortened
         except Exception as e:
             logging.error(f"Shortener Error: {e}")
-            return link
 
-    try:
-        shortzy = Shortzy(api_key=VERIFY_SHORTLINK_API, base_site=VERIFY_SHORTLINK_URL)
-        return await shortzy.convert(link)
-    except Exception as e:
-        logging.error(f"Shortzy Error: {e}")
-        return link
+    else:
+        try:
+            shortzy = Shortzy(api_key=VERIFY_SHORTLINK_API, base_site=VERIFY_SHORTLINK_URL)
+            shortened = await shortzy.convert(link)
+            if shortened and shortened.startswith("http"):
+                return shortened
+        except Exception as e:
+            logging.error(f"Shortzy Error: {e}")
+
+    return await _fallback_short_link(link)
 
 
 async def get_token(bot, user_id, start_link):
@@ -56,7 +79,6 @@ async def process_verification_success(bot, user_id, token):
     issued_at = await db.get_verify_issued_at(user_id)
 
     bypass_detected = False
-    elapsed_seconds = None
     attempts = 0
     banned_now = False
 
@@ -67,26 +89,25 @@ async def process_verification_success(bot, user_id, token):
         if elapsed_seconds < VERIFY_MIN_SECONDS:
             bypass_detected = True
             attempts = await db.increment_verify_bypass_attempt(user_id)
+            await db.clear_verify_token(user_id)
             if attempts >= VERIFY_BYPASS_BAN_ATTEMPTS:
                 await db.set_ban_status(user_id, True)
                 banned_now = True
 
-    await db.update_verify_date(user_id, now)
     if not bypass_detected:
+        await db.update_verify_date(user_id, now)
         await db.reset_verify_bypass_attempt(user_id)
 
     try:
         user = await bot.get_users(user_id)
         bot_info = await bot.get_me()
         if bypass_detected:
-            elapsed = elapsed_seconds if elapsed_seconds is not None else -1
             await bot.send_message(
                 LOG_CHANNEL,
                 f"**⌬ #VERIFY_BYPASS ⚠️**\n"
                 f"**┟ Bot:** __@{bot_info.username}__\n"
                 f"**┟ User:** __{user.mention}__\n"
                 f"**┟ User ID:** `{user.id}`\n"
-                f"**┟ Completed In:** `{elapsed}s` (Min `{VERIFY_MIN_SECONDS}s`)\n"
                 f"**┟ Attempts:** `{attempts}`\n"
                 f"**┖ Banned:** `{'YES' if banned_now else 'NO'}`"
             )
@@ -105,7 +126,6 @@ async def process_verification_success(bot, user_id, token):
 
     return {
         "bypass_detected": bypass_detected,
-        "elapsed_seconds": elapsed_seconds,
         "attempts": attempts,
         "banned_now": banned_now
     }

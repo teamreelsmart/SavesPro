@@ -1,4 +1,4 @@
-from datetime import timezone
+from datetime import datetime, timezone
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import (
@@ -31,6 +31,37 @@ async def premium_command(client, message):
         return await message.reply_text(BAN_TEXT)
 
     await message.reply_text(PREMIUM_OVERVIEW_TEXT, reply_markup=premium_keyboard(), disable_web_page_preview=True)
+
+
+@Client.on_message(filters.command(["my_plan"]) & filters.private)
+async def my_plan(client, message):
+    if await db.is_banned(message.from_user.id):
+        return await message.reply_text(BAN_TEXT)
+
+    tier, expires_at = await db.get_active_tier(message.from_user.id)
+
+    if tier == "free":
+        return await message.reply_text(
+            "🆓 <b>Your Plan: FREE</b>\n\n"
+            "Upgrade ke liye /premium use karein."
+        )
+
+    now = datetime.now(timezone.utc)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    remaining = expires_at - now
+    total_seconds = max(0, int(remaining.total_seconds()))
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+
+    await message.reply_text(
+        f"💎 <b>Your Plan: {tier.upper()}</b>\n"
+        f"👤 <b>User ID:</b> <code>{message.from_user.id}</code>\n"
+        f"📅 <b>Expiry:</b> <code>{expires_at.strftime('%d %b %Y, %H:%M UTC')}</code>\n"
+        f"⏳ <b>Remaining:</b> <code>{days}d {hours}h {minutes}m</code>"
+    )
 
 
 @Client.on_message(filters.command(["add_premium_pro", "add_premium_gold"]) & filters.private)

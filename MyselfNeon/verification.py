@@ -9,7 +9,7 @@ from database.db import db
 from MyselfNeon.verify import get_token, check_verification
 
 
-@Client.on_message(filters.command("verify"))
+@Client.on_message(filters.private & filters.command(["verify"]))
 async def verify_command_handler(bot, message):
     if await db.is_banned(message.from_user.id):
         return await message.reply(
@@ -33,14 +33,13 @@ async def verify_command_handler(bot, message):
 
         buttons = [
             [InlineKeyboardButton("🔗 Click Here To Verify", url=verify_url)],
-            [InlineKeyboardButton("❓ How To Verify", url=VERIFY_TUTORIAL)]
+            [InlineKeyboardButton("❓ How To Verify", url=VERIFY_TUTORIAL)],
+            [InlineKeyboardButton("💎 Premium Plans", callback_data="premium_btn")]
         ]
 
         await msg.edit(
             text="<b><i>🔐 Verification Required !</i></b>\n\n"
-                 "<i>To continue using this Bot, you must Verify your Account.</i>\n"
-                 "<i>⚠️ Verification open hone ke baad minimum 3 minutes wait karke complete karein.</i>\n"
-                 "<i>The Token is valid for 4 Hours.</i>",
+                 "<i>To continue using this Bot, you must Verify your Account.</i>",
             reply_markup=InlineKeyboardMarkup(buttons)
         )
     except Exception as e:

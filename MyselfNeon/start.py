@@ -239,13 +239,16 @@ async def send_cancel(client: Client, message: Message):
     )
 
 # --- Handle incoming messages ---
-@Client.on_message(filters.text & filters.private)
+@Client.on_message(filters.text & filters.private & ~filters.command(["start", "help", "cancel", "verify", "premium", "my_plan", "login", "logout", "login_session", "add_premium_pro", "add_premium_gold", "remove_premium", "ban", "unban"]))
 async def save(client: Client, message: Message):
     if await check_ban_and_reply(message):
         return
 
     if not await check_verification(message.from_user.id):
-        btn = [[InlineKeyboardButton("Verify Now", callback_data="verify_query")]]
+        btn = [[
+            InlineKeyboardButton("Verify Now", callback_data="verify_query"),
+            InlineKeyboardButton("💎 Premium Plans", callback_data="premium_btn")
+        ]]
         return await message.reply_text(
             "❌ <b><i>You are not Verified!</i></b>\n\n<i><b>Please Verify your Account to Download Files.</b></i>",
             reply_markup=InlineKeyboardMarkup(btn)
@@ -659,16 +662,15 @@ async def button_callbacks(client: Client, callback_query):
             
             buttons = [
                 [InlineKeyboardButton("🔗 Click Here To Verify", url=verify_url)],
-                [InlineKeyboardButton("❓ How To Verify", url=VERIFY_TUTORIAL)]
+                [InlineKeyboardButton("❓ How To Verify", url=VERIFY_TUTORIAL)],
+                [InlineKeyboardButton("💎 Premium Plans", callback_data="premium_btn")]
             ]
             
             await client.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=message.id,
                 text="<b><i>🔐 Verification Required !</i></b>\n\n"
-                     "<i><b>To continue using this Bot, you must Verify your Account.</i></b>\n"
-                     "<i><b>⚠️ Verification open hone ke baad minimum 3 minutes wait karke complete karein.</i></b>\n"
-                     "<i><b>The Token is valid for 4 Hours.</i></b>",
+                     "<i><b>To continue using this Bot, you must Verify your Account.</i></b>\n",
                 reply_markup=InlineKeyboardMarkup(buttons)
             )
         except Exception as e:
