@@ -13,17 +13,48 @@
 import os
 import asyncio
 import random
+from datetime import datetime, timezone
 import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated, UserAlreadyParticipant, InviteHashExpired, UsernameNotOccupied
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, MessageEntity
-from config import API_ID, API_HASH, ERROR_MESSAGE, VERIFY_TUTORIAL, START_PIC, DUMP_CHANNEL
+from config import (
+    API_ID, API_HASH, ERROR_MESSAGE, VERIFY_TUTORIAL, START_PIC, DUMP_CHANNEL,
+    FREE_SAVE_COOLDOWN_SECONDS, PRO_DAILY_BATCH_LIMIT
+)
 from database.db import db
 from MyselfNeon.strings import HELP_TXT
 from MyselfNeon.verify import check_token, verify_user, check_verification, get_token
 
 class batch_temp(object):
     IS_BATCH = {}
+
+
+async def get_user_tier(user_id: int):
+    tier, _ = await db.get_active_tier(user_id)
+    return tier
+
+
+def is_batch_request(from_id: int, to_id: int):
+    return to_id > from_id
+
+
+async def enforce_free_cooldown(message: Message):
+    last_save_at = await db.get_last_save_at(message.from_user.id)
+    if not last_save_at:
+        return True, None
+
+    now_utc = datetime.now(timezone.utc)
+    if last_save_at.tzinfo is None:
+        last_save_at = last_save_at.replace(tzinfo=timezone.utc)
+
+    elapsed = (now_utc - last_save_at).total_seconds()
+    if elapsed >= FREE_SAVE_COOLDOWN_SECONDS:
+        return True, None
+
+    remaining = int(FREE_SAVE_COOLDOWN_SECONDS - elapsed)
+    return False, remaining
+
 
 # --- Supported Telegram Reactions ---
 REACTIONS = [
@@ -129,7 +160,10 @@ async def send_start(client: Client, message: Message):
                 return await message.reply("<b><i>❌ Invalid or Expired Token!</i></b>\n\n<b><i>Use /verify to get a new one.</b></i>")
 
     buttons = [
-        [InlineKeyboardButton("Hᴏᴡ Tᴏ Usᴇ Mᴇ 🤔", callback_data="help_btn")],
+        [
+            InlineKeyboardButton("Hᴏᴡ Tᴏ Usᴇ Mᴇ 🤔", callback_data="help_btn"),
+            InlineKeyboardButton("💎 Premium Plans", callback_data="premium_btn")
+        ],
         [
             InlineKeyboardButton('Uᴘᴅᴀᴛᴇ 🔥', url='https://t.me/NeonFiles'),
             InlineKeyboardButton('Aʙᴏᴜᴛ 😎', callback_data="about_btn")
@@ -209,6 +243,28 @@ async def save(client: Client, message: Message):
             toID = int(temp[1].strip())
         except:
             toID = fromID
+
+        tier = await get_user_tier(message.from_user.id)
+        requested_count = (toID - fromID) + 1
+        is_batch = is_batch_request(fromID, toID)
+
+        if tier == "free" and is_batch:
+            return await message.reply_text("❌ Free users cannot use batch links. Upgrade to PRO/PRO GOLD.")
+
+        if tier == "free":
+            ok, remaining = await enforce_free_cooldown(message)
+            if not ok:
+                return await message.reply_text(
+                    f"⏳ Free cooldown active. Please wait {remaining} seconds before saving next message."
+                )
+
+        if tier == "pro" and is_batch:
+            used_today = await db.get_batch_daily_count(message.from_user.id)
+            if used_today + requested_count > PRO_DAILY_BATCH_LIMIT:
+                left = max(0, PRO_DAILY_BATCH_LIMIT - used_today)
+                return await message.reply_text(
+                    f"⚠️ PRO batch daily limit reached. Remaining today: {left}/{PRO_DAILY_BATCH_LIMIT}."
+                )
 
         batch_temp.IS_BATCH[message.from_user.id] = False
 
@@ -302,6 +358,12 @@ async def save(client: Client, message: Message):
                             await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
 
             await asyncio.sleep(3)
+
+        if tier == "pro" and is_batch:
+            await db.increment_batch_daily_count(message.from_user.id, requested_count)
+
+        if tier == "free":
+            await db.set_last_save_at(message.from_user.id)
 
         batch_temp.IS_BATCH[message.from_user.id] = True
         
@@ -643,7 +705,10 @@ async def button_callbacks(client: Client, callback_query):
     # --- Home / Start button ---
     elif data == "start_btn":
         start_buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Hᴏᴡ Tᴏ Usᴇ Mᴇ 🤔", callback_data="help_btn")],
+            [
+            InlineKeyboardButton("Hᴏᴡ Tᴏ Usᴇ Mᴇ 🤔", callback_data="help_btn"),
+            InlineKeyboardButton("💎 Premium Plans", callback_data="premium_btn")
+        ],
             [
                 InlineKeyboardButton("Uᴘᴅᴀᴛᴇ 🔥", url="https://t.me/NeonFiles"),
                 InlineKeyboardButton("Aʙᴏᴜᴛ 😎", callback_data="about_btn")

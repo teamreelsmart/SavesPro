@@ -12,13 +12,12 @@
 import logging
 import random
 import string
-import asyncio
 import aiohttp
 from datetime import datetime, timedelta
 from shortzy import Shortzy
-# [span_0](start_span)Added ADMINS to imports[span_0](end_span)
 from config import VERIFY_SHORTLINK_URL, VERIFY_SHORTLINK_API, VERIFY, LOG_CHANNEL, ADMINS
 from database.db import db
+
 
 async def get_verify_shorted_link(link):
     if VERIFY_SHORTLINK_URL == "api.shareus.io":
@@ -39,41 +38,34 @@ async def get_verify_shorted_link(link):
             logging.error(f"Shortzy Error: {e}")
             return link
 
+
 async def get_token(bot, user_id, start_link):
     # Ensure user exists in DB first
     if not await db.is_user_exist(user_id):
         user = await bot.get_users(user_id)
-        await db.add_user(user_id, user.first_name)
+        await db.add_user(user_id, user.first_name, user.username)
 
-    # Generate Token
     token = ''.join(random.choices(string.ascii_letters + string.digits, k=7))
-    
-    # Save token to MongoDB
     await db.update_verify_token(user_id, token)
-    
     link = f"{start_link}verify-{user_id}-{token}"
     return await get_verify_shorted_link(link)
 
+
 async def check_token(user_id, token):
-    # Get stored token from MongoDB
     stored_token = await db.get_verify_token(user_id)
-    
-    # Check if token exists and matches
-    if stored_token and stored_token == token:
-        return True
-    return False
+    return bool(stored_token and stored_token == token)
+
 
 async def verify_user(bot, user_id, token):
-    # Save current time to MongoDB
     now = datetime.now()
     await db.update_verify_date(user_id, now)
-    
+
     try:
         user = await bot.get_users(user_id)
         bot_info = await bot.get_me()
-        
+
         await bot.send_message(
-            LOG_CHANNEL, 
+            LOG_CHANNEL,
             f"**⌬ #VERIFIED ✅**\n"
             f"**┟ Bot:** __@{bot_info.username}__\n"
             f"**┟ User:** __{user.mention}__\n"
@@ -84,20 +76,20 @@ async def verify_user(bot, user_id, token):
     except Exception as e:
         print(f"Log Error: {e}")
 
+
 async def check_verification(user_id):
-    # --- ADMIN BYPASS ---
     if user_id == ADMINS:
         return True
 
-    if not VERIFY: 
+    tier, _ = await db.get_active_tier(user_id)
+    if tier == "pro_gold":
         return True
-    
-    # Get verification date from MongoDB
+
+    if not VERIFY:
+        return True
+
     verified_time = await db.get_verify_date(user_id)
-    
-    if verified_time:
-        # Check if current time is less than Verification Time + 4 Hours
-        if datetime.now() < verified_time + timedelta(hours=4):
-            return True
-            
+    if verified_time and datetime.now() < verified_time + timedelta(hours=4):
+        return True
+
     return False
