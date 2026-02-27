@@ -11,6 +11,7 @@
 # ---------------------------------------------------
 
 import motor.motor_asyncio
+from datetime import datetime, timezone, timedelta
 from config import DB_NAME, DB_URI
 
 class Database:
@@ -28,7 +29,12 @@ class Database:
             username = username,  # <--- Now saving username
             session = None,
             verify_token = None,
-            verify_date = None
+            verify_date = None,
+            premium_tier = "free",
+            premium_expires_at = None,
+            batch_daily_count = 0,
+            batch_daily_date = None,
+            last_save_at = None
         )
     
     # UPDATED: Added username argument
@@ -71,5 +77,68 @@ class Database:
     async def get_verify_date(self, id):
         user = await self.col.find_one({'id': int(id)})
         return user.get('verify_date')
+
+    async def get_user(self, id):
+        return await self.col.find_one({'id': int(id)})
+
+    async def ensure_user(self, id, name=None, username=None):
+        if not await self.is_user_exist(id):
+            await self.add_user(id, name or "User", username)
+
+    async def set_premium(self, id, tier, days):
+        expires_at = datetime.now(timezone.utc) + timedelta(days=int(days))
+        await self.col.update_one(
+            {'id': int(id)},
+            {'$set': {'premium_tier': tier, 'premium_expires_at': expires_at}},
+            upsert=True
+        )
+        return expires_at
+
+    async def get_active_tier(self, id):
+        user = await self.get_user(id)
+        if not user:
+            return "free", None
+
+        tier = user.get("premium_tier", "free")
+        expires_at = user.get("premium_expires_at")
+
+        if tier in ("pro", "pro_gold") and expires_at:
+            now_utc = datetime.now(timezone.utc)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now_utc < expires_at:
+                return tier, expires_at
+
+        return "free", None
+
+    async def get_batch_daily_count(self, id):
+        user = await self.get_user(id)
+        if not user:
+            return 0
+        today = datetime.now(timezone.utc).date().isoformat()
+        if user.get("batch_daily_date") != today:
+            await self.col.update_one(
+                {'id': int(id)},
+                {'$set': {'batch_daily_date': today, 'batch_daily_count': 0}}
+            )
+            return 0
+        return int(user.get("batch_daily_count", 0))
+
+    async def increment_batch_daily_count(self, id, value=1):
+        await self.get_batch_daily_count(id)
+        await self.col.update_one({'id': int(id)}, {'$inc': {'batch_daily_count': int(value)}})
+
+    async def get_last_save_at(self, id):
+        user = await self.get_user(id)
+        if not user:
+            return None
+        return user.get("last_save_at")
+
+    async def set_last_save_at(self, id):
+        await self.col.update_one(
+            {'id': int(id)},
+            {'$set': {'last_save_at': datetime.now(timezone.utc)}},
+            upsert=True
+        )
 
 db = Database(DB_URI, DB_NAME)
