@@ -65,18 +65,28 @@ async def check_ban_and_reply(message: Message):
         return True
     return False
 
-async def check_force_sub(client: Client, message: Message):
+async def is_user_subscribed(client: Client, user_id: int):
     if not FORCE_SUB_CHANNEL:
         return True
 
     try:
-        member = await client.get_chat_member(FORCE_SUB_CHANNEL, message.from_user.id)
-        if member.status in ("member", "administrator", "creator"):
-            return True
+        member = await client.get_chat_member(FORCE_SUB_CHANNEL, user_id)
+        status = str(getattr(member, "status", "")).lower()
+        allowed = {
+            "member", "administrator", "creator", "restricted",
+            "chatmemberstatus.member", "chatmemberstatus.administrator",
+            "chatmemberstatus.owner", "chatmemberstatus.restricted"
+        }
+        return status in allowed
     except UserNotParticipant:
-        pass
+        return False
     except Exception:
-        pass
+        return False
+
+
+async def check_force_sub(client: Client, message: Message):
+    if await is_user_subscribed(client, message.from_user.id):
+        return True
 
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Join Channel", url=FORCE_SUB_CHANNEL_URL)],
@@ -708,14 +718,10 @@ async def button_callbacks(client: Client, callback_query):
             await callback_query.answer("Force subscription is disabled.", show_alert=True)
             return
 
-        try:
-            member = await client.get_chat_member(FORCE_SUB_CHANNEL, callback_query.from_user.id)
-            if member.status in ("member", "administrator", "creator"):
-                await callback_query.answer("✅ Subscription verified.", show_alert=False)
-                await callback_query.message.delete()
-                return
-        except Exception:
-            pass
+        if await is_user_subscribed(client, callback_query.from_user.id):
+            await callback_query.answer("✅ Subscription verified.", show_alert=False)
+            await callback_query.message.delete()
+            return
 
         await callback_query.answer("❌ Please join the channel first.", show_alert=True)
 
