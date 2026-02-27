@@ -13,17 +13,58 @@
 import os
 import asyncio
 import random
+from datetime import datetime, timezone
 import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated, UserAlreadyParticipant, InviteHashExpired, UsernameNotOccupied
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, MessageEntity
-from config import API_ID, API_HASH, ERROR_MESSAGE, VERIFY_TUTORIAL, START_PIC, DUMP_CHANNEL
+from config import (
+    API_ID, API_HASH, ERROR_MESSAGE, VERIFY_TUTORIAL, START_PIC, DUMP_CHANNEL,
+    FREE_SAVE_COOLDOWN_SECONDS, PRO_DAILY_BATCH_LIMIT
+)
 from database.db import db
 from MyselfNeon.strings import HELP_TXT
-from MyselfNeon.verify import check_token, verify_user, check_verification, get_token
+from MyselfNeon.verify import check_token, process_verification_success, check_verification, get_token
 
 class batch_temp(object):
     IS_BATCH = {}
+
+
+async def get_user_tier(user_id: int):
+    tier, _ = await db.get_active_tier(user_id)
+    return tier
+
+
+def is_batch_request(from_id: int, to_id: int):
+    return to_id > from_id
+
+
+async def enforce_free_cooldown(message: Message):
+    last_save_at = await db.get_last_save_at(message.from_user.id)
+    if not last_save_at:
+        return True, None
+
+    now_utc = datetime.now(timezone.utc)
+    if last_save_at.tzinfo is None:
+        last_save_at = last_save_at.replace(tzinfo=timezone.utc)
+
+    elapsed = (now_utc - last_save_at).total_seconds()
+    if elapsed >= FREE_SAVE_COOLDOWN_SECONDS:
+        return True, None
+
+    remaining = int(FREE_SAVE_COOLDOWN_SECONDS - elapsed)
+    return False, remaining
+
+
+async def check_ban_and_reply(message: Message):
+    if await db.is_banned(message.from_user.id):
+        await message.reply_text(
+            "🚫 Aapne suspicious activity ki hai. Aap is bot ko use nahi kar sakte.\n\n"
+            "Unban ke liye admin ko contact karein."
+        )
+        return True
+    return False
+
 
 # --- Supported Telegram Reactions ---
 REACTIONS = [
@@ -102,6 +143,9 @@ def get_formatted_footer(message, msg_link, caption, original_entities):
 # --- Start command ---
 @Client.on_message(filters.command(["start"]))
 async def send_start(client: Client, message: Message):
+    if await check_ban_and_reply(message):
+        return
+
     if not await db.is_user_exist(message.from_user.id):
         await db.add_user(
             message.from_user.id, 
@@ -123,13 +167,21 @@ async def send_start(client: Client, message: Message):
                 return await message.reply("❌ This link is not for you!")
 
             if await check_token(user_id, token):
-                await verify_user(client, user_id, token)
+                result = await process_verification_success(client, user_id, token)
+                if result.get("banned_now"):
+                    return await message.reply("🚫 Verification bypass attempt repeat hua. Aapko bot se ban kar diya gaya hai.")
+
+                if result.get("bypass_detected"):
+                    return await message.reply("⚠️ You try to bypass verification time. Last warning to you. Next time try kiya to aap ban ho jaoge.")
                 return await message.reply("<b><i>✅ Verification Successful!</i></b>\n\n<b><i>You can now Use the Bot for 4 Hours.</i></b>")
             else:
                 return await message.reply("<b><i>❌ Invalid or Expired Token!</i></b>\n\n<b><i>Use /verify to get a new one.</b></i>")
 
     buttons = [
-        [InlineKeyboardButton("Hᴏᴡ Tᴏ Usᴇ Mᴇ 🤔", callback_data="help_btn")],
+        [
+            InlineKeyboardButton("Hᴏᴡ Tᴏ Usᴇ Mᴇ 🤔", callback_data="help_btn"),
+            InlineKeyboardButton("💎 Premium Plans", callback_data="premium_btn")
+        ],
         [
             InlineKeyboardButton('Uᴘᴅᴀᴛᴇ 🔥', url='https://t.me/NeonFiles'),
             InlineKeyboardButton('Aʙᴏᴜᴛ 😎', callback_data="about_btn")
@@ -189,6 +241,9 @@ async def send_cancel(client: Client, message: Message):
 # --- Handle incoming messages ---
 @Client.on_message(filters.text & filters.private)
 async def save(client: Client, message: Message):
+    if await check_ban_and_reply(message):
+        return
+
     if not await check_verification(message.from_user.id):
         btn = [[InlineKeyboardButton("Verify Now", callback_data="verify_query")]]
         return await message.reply_text(
@@ -209,6 +264,28 @@ async def save(client: Client, message: Message):
             toID = int(temp[1].strip())
         except:
             toID = fromID
+
+        tier = await get_user_tier(message.from_user.id)
+        requested_count = (toID - fromID) + 1
+        is_batch = is_batch_request(fromID, toID)
+
+        if tier == "free" and is_batch:
+            return await message.reply_text("❌ Free users cannot use batch links. Upgrade to PRO/PRO GOLD.")
+
+        if tier == "free":
+            ok, remaining = await enforce_free_cooldown(message)
+            if not ok:
+                return await message.reply_text(
+                    f"⏳ Free cooldown active. Please wait {remaining} seconds before saving next message."
+                )
+
+        if tier == "pro" and is_batch:
+            used_today = await db.get_batch_daily_count(message.from_user.id)
+            if used_today + requested_count > PRO_DAILY_BATCH_LIMIT:
+                left = max(0, PRO_DAILY_BATCH_LIMIT - used_today)
+                return await message.reply_text(
+                    f"⚠️ PRO batch daily limit reached. Remaining today: {left}/{PRO_DAILY_BATCH_LIMIT}."
+                )
 
         batch_temp.IS_BATCH[message.from_user.id] = False
 
@@ -302,6 +379,12 @@ async def save(client: Client, message: Message):
                             await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
 
             await asyncio.sleep(3)
+
+        if tier == "pro" and is_batch:
+            await db.increment_batch_daily_count(message.from_user.id, requested_count)
+
+        if tier == "free":
+            await db.set_last_save_at(message.from_user.id)
 
         batch_temp.IS_BATCH[message.from_user.id] = True
         
@@ -560,6 +643,10 @@ async def button_callbacks(client: Client, callback_query):
 
     # --- NEW VERIFY BUTTON HANDLE ---
     if data == "verify_query":
+        if await db.is_banned(callback_query.from_user.id):
+            await callback_query.answer("You are banned from using this bot.", show_alert=True)
+            return
+
         # Acknowledge the callback immediately to stop the spinning
         await callback_query.answer("Generating link...", show_alert=False)
         
@@ -580,6 +667,7 @@ async def button_callbacks(client: Client, callback_query):
                 message_id=message.id,
                 text="<b><i>🔐 Verification Required !</i></b>\n\n"
                      "<i><b>To continue using this Bot, you must Verify your Account.</i></b>\n"
+                     "<i><b>⚠️ Verification open hone ke baad minimum 3 minutes wait karke complete karein.</i></b>\n"
                      "<i><b>The Token is valid for 4 Hours.</i></b>",
                 reply_markup=InlineKeyboardMarkup(buttons)
             )
@@ -643,7 +731,10 @@ async def button_callbacks(client: Client, callback_query):
     # --- Home / Start button ---
     elif data == "start_btn":
         start_buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Hᴏᴡ Tᴏ Usᴇ Mᴇ 🤔", callback_data="help_btn")],
+            [
+            InlineKeyboardButton("Hᴏᴡ Tᴏ Usᴇ Mᴇ 🤔", callback_data="help_btn"),
+            InlineKeyboardButton("💎 Premium Plans", callback_data="premium_btn")
+        ],
             [
                 InlineKeyboardButton("Uᴘᴅᴀᴛᴇ 🔥", url="https://t.me/NeonFiles"),
                 InlineKeyboardButton("Aʙᴏᴜᴛ 😎", callback_data="about_btn")

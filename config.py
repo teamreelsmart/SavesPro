@@ -51,6 +51,39 @@ VERIFY_SHORTLINK_URL = os.environ.get('VERIFY_SHORTLINK_URL', 'ShrinkMe.io') # Y
 VERIFY_SHORTLINK_API = os.environ.get('VERIFY_SHORTLINK_API', '') # Your Shortener API Key
 VERIFY_TUTORIAL = os.environ.get('VERIFY_TUTORIAL', 'https://t.me/your_tutorial_link') # Tutorial Link
 
+VERIFY_MIN_SECONDS = int(os.environ.get("VERIFY_MIN_SECONDS", "180"))
+VERIFY_BYPASS_BAN_ATTEMPTS = int(os.environ.get("VERIFY_BYPASS_BAN_ATTEMPTS", "2"))
+
+# -------------------
+# PREMIUM CONFIG
+# -------------------
+FREE_SAVE_COOLDOWN_SECONDS = int(os.environ.get("FREE_SAVE_COOLDOWN_SECONDS", "60"))
+PRO_DAILY_BATCH_LIMIT = int(os.environ.get("PRO_DAILY_BATCH_LIMIT", "500"))
+
+PREMIUM_OVERVIEW_TEXT = os.environ.get(
+    "PREMIUM_OVERVIEW_TEXT",
+    "<b>💎 Premium Plans</b>\n\n"
+    "<b>PRO:</b> No cooldown, verification required, batch limit 500/day.\n"
+    "<b>PRO GOLD:</b> No cooldown, no verification, unlimited batch."
+)
+
+PRO_PLAN_NAME = os.environ.get("PRO_PLAN_NAME", "PRO PLAN")
+PRO_PLAN_QR_IMAGE = os.environ.get("PRO_PLAN_QR_IMAGE", "https://example.com/pro_qr.jpg")
+PRO_PLAN_DETAILS = os.environ.get(
+    "PRO_PLAN_DETAILS",
+    "<b>✅ PRO Plan</b>\nNo cooldown\nBatch limit: 500/day\nVerification required"
+)
+
+PRO_GOLD_PLAN_NAME = os.environ.get("PRO_GOLD_PLAN_NAME", "PRO GOLD PLAN")
+PRO_GOLD_PLAN_QR_IMAGE = os.environ.get("PRO_GOLD_PLAN_QR_IMAGE", "https://example.com/pro_gold_qr.jpg")
+PRO_GOLD_PLAN_DETAILS = os.environ.get(
+    "PRO_GOLD_PLAN_DETAILS",
+    "<b>👑 PRO GOLD Plan</b>\nNo cooldown\nUnlimited batch\nNo verification required"
+)
+
+PREMIUM_CONTACT_BUTTON_TEXT = os.environ.get("PREMIUM_CONTACT_BUTTON_TEXT", "📞 Contact Admin")
+PREMIUM_CONTACT_URL = os.environ.get("PREMIUM_CONTACT_URL", "https://t.me/your_admin_username")
+
 
 # MyselfNeon
 # Don't Remove Credit 🥺
