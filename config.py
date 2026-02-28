@@ -89,7 +89,19 @@ PRO_GOLD_PLAN_NAME = os.environ.get("PRO_GOLD_PLAN_NAME", "PRO GOLD PLAN")
 PRO_GOLD_PLAN_QR_IMAGE = os.environ.get("PRO_GOLD_PLAN_QR_IMAGE", "https://example.com/pro_gold_qr.jpg")
 PRO_GOLD_PLAN_DETAILS = os.environ.get(
     "PRO_GOLD_PLAN_DETAILS",
-    "<b>👑 PRO GOLD Plan</b>\nNo cooldown\nUnlimited batch\nNo verification required"
+    "👑 PRO GOLD PLAN – ₹200\n\n"
+    "🔥 Uʟᴛɪᴍᴀᴛᴇ Pʀᴇᴍɪᴜᴍ Aᴄᴄᴇss:\n\n"
+    "✅ Nᴏ Cᴏᴏʟᴅᴏᴡɴ Tɪᴍᴇ\n"
+    "✅ Nᴏ Vᴇʀɪғɪᴄᴀᴛɪᴏɴ Rᴇǫᴜɪʀᴇᴅ\n"
+    "✅ Uɴʟɪᴍɪᴛᴇᴅ Bᴀᴛᴄʜ Mᴇssᴀɢᴇ Sᴀᴠɪɴɢ\n"
+    "✅ Fᴀsᴛᴇsᴛ Pʀᴏᴄᴇssɪɴɢ Sᴘᴇᴇᴅ\n"
+    "✅ Fᴜʟʟ Bᴏᴛ Aᴄᴄᴇss\n"
+    "✅ Pʀɪᴏʀɪᴛʏ Sᴜᴘᴘᴏʀᴛ\n\n"
+    "💳 Pᴀʏᴍᴇɴᴛ Mᴇᴛʜᴏᴅ\n\n"
+    "UPI ID: luciferjaat@ptyes\n"
+    "Pᴀʏ ᴜsɪɴɢ UPI / GPᴀʏ / PʜᴏɴᴇPᴇ / Pᴀʏᴛᴍ\n\n"
+    "📌 Aғᴛᴇʀ Pᴀʏᴍᴇɴᴛ:\n"
+    "Sᴇɴᴅ Pᴀʏᴍᴇɴᴛ Sᴄʀᴇᴇɴsʜᴏᴛ ᴛᴏ Aᴅᴍɪɴ ғᴏʀ Iɴsᴛᴀɴᴛ Aᴄᴛɪᴠᴀᴛɪᴏɴ."
 )
 
 PREMIUM_CONTACT_BUTTON_TEXT = os.environ.get("PREMIUM_CONTACT_BUTTON_TEXT", "📞 Contact Admin")
