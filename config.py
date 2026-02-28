@@ -47,6 +47,12 @@ START_PIC = os.environ.get("START_PIC", "https://files.catbox.moe/krxuel.jpg")
 FORCE_SUB_CHANNEL = int(os.environ.get("FORCE_SUB_CHANNEL", "0"))
 FORCE_SUB_CHANNEL_URL = os.environ.get("FORCE_SUB_CHANNEL_URL", "https://t.me/your_channel")
 
+# Optional UI Photos
+VERIFY_PIC = os.environ.get("VERIFY_PIC", "")
+MY_PLAN_PIC = os.environ.get("MY_PLAN_PIC", "")
+FORCE_SUB_PIC = os.environ.get("FORCE_SUB_PIC", "")
+BYPASS_ALERT_PIC = os.environ.get("BYPASS_ALERT_PIC", "")
+
 # -------------------
 # VERIFICATION CONFIG
 # -------------------

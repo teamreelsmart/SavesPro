@@ -4,7 +4,7 @@
 
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import VERIFY, VERIFY_TUTORIAL
+from config import VERIFY, VERIFY_TUTORIAL, VERIFY_PIC
 from database.db import db
 from MyselfNeon.verify import get_token, check_verification
 
@@ -36,11 +36,19 @@ async def verify_command_handler(bot, message):
             [InlineKeyboardButton("💎 Premium Plans", callback_data="premium_btn")]
         ]
 
-        await msg.edit(
-            text="<b>🔐 Verification Required!</b>\n\n"
-                 "<b>To continue using this bot, please verify your account.</b>",
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
+        if VERIFY_PIC:
+            await msg.delete()
+            await message.reply_photo(
+                VERIFY_PIC,
+                caption="<b>🔐 Verification Required!</b>\n\n<b>To continue using this bot, please verify your account.</b>",
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+        else:
+            await msg.edit(
+                text="<b>🔐 Verification Required!</b>\n\n"
+                     "<b>To continue using this bot, please verify your account.</b>",
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
     except Exception as e:
         await msg.edit(f"<b>Error generating link:</b> <code>{e}</code>")
 

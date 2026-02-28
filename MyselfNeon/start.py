@@ -20,7 +20,8 @@ from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated, User
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, MessageEntity
 from config import (
     API_ID, API_HASH, ERROR_MESSAGE, VERIFY_TUTORIAL, START_PIC, DUMP_CHANNEL,
-    FREE_SAVE_COOLDOWN_SECONDS, PRO_DAILY_BATCH_LIMIT, FORCE_SUB_CHANNEL, FORCE_SUB_CHANNEL_URL
+    FREE_SAVE_COOLDOWN_SECONDS, PRO_DAILY_BATCH_LIMIT, FORCE_SUB_CHANNEL, FORCE_SUB_CHANNEL_URL,
+    FORCE_SUB_PIC, BYPASS_ALERT_PIC, VERIFY_PIC
 )
 from database.db import db
 from MyselfNeon.strings import HELP_TXT
@@ -92,11 +93,18 @@ async def check_force_sub(client: Client, message: Message):
         [InlineKeyboardButton("📢 Join Channel", url=FORCE_SUB_CHANNEL_URL)],
         [InlineKeyboardButton("✅ Joined", callback_data="force_sub_check")]
     ])
-    await message.reply_text(
-        "<b>🔒 You must join our updates channel before using this bot.</b>",
-        reply_markup=buttons,
-        disable_web_page_preview=True
-    )
+    if FORCE_SUB_PIC:
+        await message.reply_photo(
+            FORCE_SUB_PIC,
+            caption="<b>🔒 You must join our updates channel before using this bot.</b>",
+            reply_markup=buttons
+        )
+    else:
+        await message.reply_text(
+            "<b>🔒 You must join our updates channel before using this bot.</b>",
+            reply_markup=buttons,
+            disable_web_page_preview=True
+        )
     return False
 
 
@@ -209,7 +217,13 @@ async def send_start(client: Client, message: Message):
                     return await message.reply("🚫 <b>Repeated bypass detected. You are now banned from this bot.</b>")
 
                 if result.get("bypass_detected"):
+                    if BYPASS_ALERT_PIC:
+                        return await message.reply_photo(
+                            BYPASS_ALERT_PIC,
+                            caption="⚠️ <b>Verification bypass detected.</b>\n\n<b>Please verify again to continue using the bot.</b>"
+                        )
                     return await message.reply("⚠️ <b>Verification bypass detected.</b>\n\n<b>Please verify again to continue using the bot.</b>")
+
                 return await message.reply("<b><i>✅ Verification Successful!</i></b>\n\n<b><i>You can now Use the Bot for 4 Hours.</i></b>")
             else:
                 return await message.reply("<b><i>❌ Invalid or Expired Token!</i></b>\n\n<b><i>Use /verify to get a new one.</b></i>")
@@ -306,6 +320,7 @@ async def save(client: Client, message: Message):
             toID = fromID
 
         tier = await get_user_tier(message.from_user.id)
+        destination_chat_id = await db.get_destination_chat(message.from_user.id) if tier == "pro_gold" else None
         requested_count = (toID - fromID) + 1
         is_batch = is_batch_request(fromID, toID)
 
@@ -355,7 +370,7 @@ async def save(client: Client, message: Message):
             if "https://t.me/c/" in message.text:
                 chatid = int("-100" + datas[4])
                 try:
-                    await handle_private(client, acc, message, chatid, msgid, status_msg=smsg)
+                    await handle_private(client, acc, message, chatid, msgid, status_msg=smsg, destination_chat_id=destination_chat_id)
                 except Exception as e:
                     if ERROR_MESSAGE:
                         await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
@@ -364,7 +379,7 @@ async def save(client: Client, message: Message):
             elif "https://t.me/b/" in message.text:
                 username = datas[4]
                 try:
-                    await handle_private(client, acc, message, username, msgid, status_msg=smsg)
+                    await handle_private(client, acc, message, username, msgid, status_msg=smsg, destination_chat_id=destination_chat_id)
                 except Exception as e:
                     if ERROR_MESSAGE:
                         await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
@@ -385,6 +400,8 @@ async def save(client: Client, message: Message):
                     
                     # 2. Fast Copy to User (ORIGINAL - NO FOOTER)
                     await client.copy_message(message.chat.id, msg.chat.id, msg.id)
+                    if destination_chat_id:
+                        await client.copy_message(destination_chat_id, msg.chat.id, msg.id)
                     
                     # 3. Send to Dump (WITH FOOTER)
                     if DUMP_CHANNEL:
@@ -413,7 +430,7 @@ async def save(client: Client, message: Message):
                 except Exception as e:
                     # If Copy Fails (Restricted Public), Fallback to Downloader
                     try:
-                        await handle_private(client, acc, message, username, msgid, status_msg=smsg)
+                        await handle_private(client, acc, message, username, msgid, status_msg=smsg, destination_chat_id=destination_chat_id)
                     except Exception as e:
                         if ERROR_MESSAGE:
                             await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
@@ -429,8 +446,7 @@ async def save(client: Client, message: Message):
         batch_temp.IS_BATCH[message.from_user.id] = True
         
 # --- Handle private content ---
-async def handle_private(client: Client, acc, message: Message, chatid: int, msgid: int, status_msg: Message = None):
-    # Fetch Message from User Client (ACC)
+async def handle_private(client: Client, acc, message: Message, chatid: int, msgid: int, status_msg: Message = None, destination_chat_id: int = None):
     msg: Message = await acc.get_messages(chatid, msgid)
     if msg.empty:
         return
@@ -443,54 +459,33 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
     if batch_temp.IS_BATCH.get(message.from_user.id):
         return
 
-    # ---------------------------------------------------------
-    # PREPARE FOOTER DATA (User, Link, Entities)
-    # ---------------------------------------------------------
-    
-    # Generate Link
     if isinstance(chatid, int):
         c_id_str = str(chatid)
-        if c_id_str.startswith("-100"):
-            clean_id = c_id_str[4:]
-        else:
-            clean_id = c_id_str
+        clean_id = c_id_str[4:] if c_id_str.startswith("-100") else c_id_str
         msg_link = f"https://t.me/c/{clean_id}/{msgid}"
     else:
         msg_link = f"https://t.me/{chatid}/{msgid}"
 
-    # Generate Formatted Footer (FOR DUMP ONLY)
     original_caption = msg.caption if msg.caption else ""
     original_entities = msg.caption_entities if msg.caption_entities else []
-    
     full_dump_text, dump_entities = get_formatted_footer(message, msg_link, original_caption, original_entities)
 
-    # ---------------------------------------------------------
-    # HANDLE TEXT MESSAGES
-    # ---------------------------------------------------------
     if "Text" == msg_type:
         try:
-            # 1. Send to User (ORIGINAL - NO FOOTER)
             await client.send_message(chat, msg.text, entities=msg.entities)
-            
-            # 2. Send to Dump (WITH FOOTER)
+            if destination_chat_id:
+                await client.send_message(destination_chat_id, msg.text, entities=msg.entities)
             if DUMP_CHANNEL:
-                text_content = msg.text
-                full_text_dump, full_text_entities = get_formatted_footer(message, msg_link, text_content, msg.entities)
+                full_text_dump, full_text_entities = get_formatted_footer(message, msg_link, msg.text, msg.entities)
                 await client.send_message(DUMP_CHANNEL, full_text_dump, entities=full_text_entities)
-            
             if status_msg:
                 await status_msg.delete()
             return
         except Exception as e:
             if ERROR_MESSAGE:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id,
-                                          parse_mode=enums.ParseMode.HTML)
+                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
             return
 
-    # ---------------------------------------------------------
-    # HANDLE MEDIA DOWNLOAD (Status Handling)
-    # ---------------------------------------------------------
-    # If we have a passed status_msg, edit it. Otherwise create new.
     if status_msg:
         try:
             smsg = await status_msg.edit('**__Downloading 🚀__**')
@@ -505,129 +500,88 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         os.remove(f'{message.id}downstatus.txt')
     except Exception as e:
         if ERROR_MESSAGE:
-            await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id,
-                                      parse_mode=enums.ParseMode.HTML)
+            await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
         return await smsg.delete()
 
     if batch_temp.IS_BATCH.get(message.from_user.id):
         return
 
     asyncio.create_task(upstatus(client, f'{message.id}upstatus.txt', smsg, chat))
-    
-    # ---------------------------------------------------------
-    # UPLOAD & DUMP
-    # ---------------------------------------------------------
     caption = msg.caption if msg.caption else ""
-    
+
     try:
         if "Document" == msg_type:
             try:
                 ph_path = await acc.download_media(msg.document.thumbs[0].file_id)
             except:
                 ph_path = None
-            
-            # User gets ORIGINAL
-            await client.send_document(chat, file, thumb=ph_path, caption=caption, 
-                                       caption_entities=msg.caption_entities,
-                                       progress=progress, progress_args=[message, "up"])
-            
-            # Dump gets FOOTER
+            await client.send_document(chat, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
+            if destination_chat_id:
+                await client.send_document(destination_chat_id, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities)
             if DUMP_CHANNEL:
-                try:
-                    await client.send_document(DUMP_CHANNEL, file, thumb=ph_path, caption=full_dump_text, 
-                                               caption_entities=dump_entities)
-                except Exception as e:
-                    print(f"Dump Error: {e}")
-
-            if ph_path: os.remove(ph_path)
+                await client.send_document(DUMP_CHANNEL, file, thumb=ph_path, caption=full_dump_text, caption_entities=dump_entities)
+            if ph_path:
+                os.remove(ph_path)
 
         elif "Video" == msg_type:
             try:
                 ph_path = await acc.download_media(msg.video.thumbs[0].file_id)
             except:
                 ph_path = None
-
-            # User gets ORIGINAL
-            await client.send_video(chat, file, duration=msg.video.duration, width=msg.video.width,
-                                    height=msg.video.height, thumb=ph_path, caption=caption,
-                                    caption_entities=msg.caption_entities,
-                                    progress=progress, progress_args=[message, "up"])
-            
-            # Dump gets FOOTER
+            await client.send_video(chat, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
+            if destination_chat_id:
+                await client.send_video(destination_chat_id, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities)
             if DUMP_CHANNEL:
-                try:
-                    await client.send_video(DUMP_CHANNEL, file, duration=msg.video.duration, width=msg.video.width,
-                                        height=msg.video.height, thumb=ph_path, caption=full_dump_text, 
-                                        caption_entities=dump_entities)
-                except Exception as e:
-                    print(f"Dump Error: {e}")
-
-            if ph_path: os.remove(ph_path)
+                await client.send_video(DUMP_CHANNEL, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=full_dump_text, caption_entities=dump_entities)
+            if ph_path:
+                os.remove(ph_path)
 
         elif "Animation" == msg_type:
             await client.send_animation(chat, file, caption=caption, caption_entities=msg.caption_entities)
-            
+            if destination_chat_id:
+                await client.send_animation(destination_chat_id, file, caption=caption, caption_entities=msg.caption_entities)
             if DUMP_CHANNEL:
-                try:
-                    await client.send_animation(DUMP_CHANNEL, file, caption=full_dump_text, 
-                                                caption_entities=dump_entities)
-                except Exception as e:
-                    print(f"Dump Error: {e}")
+                await client.send_animation(DUMP_CHANNEL, file, caption=full_dump_text, caption_entities=dump_entities)
 
         elif "Sticker" == msg_type:
             await client.send_sticker(chat, file)
-            # No dump for stickers
+            if destination_chat_id:
+                await client.send_sticker(destination_chat_id, file)
 
         elif "Voice" == msg_type:
-            await client.send_voice(chat, file, caption=caption, caption_entities=msg.caption_entities,
-                                    progress=progress, progress_args=[message, "up"])
-            
+            await client.send_voice(chat, file, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
+            if destination_chat_id:
+                await client.send_voice(destination_chat_id, file, caption=caption, caption_entities=msg.caption_entities)
             if DUMP_CHANNEL:
-                try:
-                    await client.send_voice(DUMP_CHANNEL, file, caption=full_dump_text, 
-                                            caption_entities=dump_entities)
-                except Exception as e:
-                    print(f"Dump Error: {e}")
+                await client.send_voice(DUMP_CHANNEL, file, caption=full_dump_text, caption_entities=dump_entities)
 
         elif "Audio" == msg_type:
             try:
                 ph_path = await acc.download_media(msg.audio.thumbs[0].file_id)
             except:
                 ph_path = None
-            
-            # User gets ORIGINAL
-            await client.send_audio(chat, file, thumb=ph_path, caption=caption, 
-                                    caption_entities=msg.caption_entities,
-                                    progress=progress, progress_args=[message, "up"])
-            
-            # Dump gets FOOTER
+            await client.send_audio(chat, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
+            if destination_chat_id:
+                await client.send_audio(destination_chat_id, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities)
             if DUMP_CHANNEL:
-                try:
-                    await client.send_audio(DUMP_CHANNEL, file, thumb=ph_path, caption=full_dump_text, 
-                                            caption_entities=dump_entities)
-                except Exception as e:
-                    print(f"Dump Error: {e}")
-
-            if ph_path: os.remove(ph_path)
+                await client.send_audio(DUMP_CHANNEL, file, thumb=ph_path, caption=full_dump_text, caption_entities=dump_entities)
+            if ph_path:
+                os.remove(ph_path)
 
         elif "Photo" == msg_type:
-            await client.send_photo(chat, file, caption=caption, 
-                                    caption_entities=msg.caption_entities)
-            
+            await client.send_photo(chat, file, caption=caption, caption_entities=msg.caption_entities)
+            if destination_chat_id:
+                await client.send_photo(destination_chat_id, file, caption=caption, caption_entities=msg.caption_entities)
             if DUMP_CHANNEL:
-                try:
-                    await client.send_photo(DUMP_CHANNEL, file, caption=full_dump_text, 
-                                            caption_entities=dump_entities)
-                except Exception as e:
-                    print(f"Dump Error: {e}")
+                await client.send_photo(DUMP_CHANNEL, file, caption=full_dump_text, caption_entities=dump_entities)
 
     except Exception as e:
         if ERROR_MESSAGE:
-            await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id,
-                                      parse_mode=enums.ParseMode.HTML)
+            await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
 
     if os.path.exists(f'{message.id}upstatus.txt'):
         os.remove(f'{message.id}upstatus.txt')
+    if os.path.exists(file):
         os.remove(file)
 
     await client.delete_messages(message.chat.id, [smsg.id])

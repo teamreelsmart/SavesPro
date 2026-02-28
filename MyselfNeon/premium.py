@@ -1,10 +1,11 @@
 from datetime import datetime, timezone, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import UserNotParticipant
 from config import (
     ADMINS, PREMIUM_OVERVIEW_TEXT, PRO_PLAN_NAME, PRO_PLAN_QR_IMAGE, PRO_PLAN_DETAILS,
     PRO_GOLD_PLAN_NAME, PRO_GOLD_PLAN_QR_IMAGE, PRO_GOLD_PLAN_DETAILS,
-    PREMIUM_CONTACT_BUTTON_TEXT, PREMIUM_CONTACT_URL
+    PREMIUM_CONTACT_BUTTON_TEXT, PREMIUM_CONTACT_URL, MY_PLAN_PIC
 )
 from database.db import db
 
@@ -39,21 +40,73 @@ async def my_plan(client, message):
         return await message.reply_text(BAN_TEXT)
 
     tier, expires_at = await db.get_active_tier(message.from_user.id)
+    destination_chat = await db.get_destination_chat(message.from_user.id)
+
     if tier == "free":
-        return await message.reply_text("🆓 <b>Your Plan: FREE</b>\n\n<b>Upgrade using /premium.</b>")
+        text = "🆓 <b>Your Plan: FREE</b>\n\n<b>Upgrade using /premium.</b>"
+        btn = InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Set Destination Chat", callback_data="set_dest_chat")]])
+        if MY_PLAN_PIC:
+            return await message.reply_photo(MY_PLAN_PIC, caption=text, reply_markup=btn)
+        return await message.reply_text(text, reply_markup=btn)
 
     now = datetime.now(timezone.utc)
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    remaining = expires_at - now
-    total_seconds = max(0, int(remaining.total_seconds()))
+    total_seconds = max(0, int((expires_at - now).total_seconds()))
 
-    await message.reply_text(
+    text = (
         f"💎 <b>Your Plan: {tier.upper()}</b>\n"
         f"👤 <b>User ID:</b> <code>{message.from_user.id}</code>\n"
         f"📅 <b>Expiry:</b> <code>{expires_at.astimezone(IST).strftime('%d %b %Y, %I:%M %p IST')}</code>\n"
-        f"⏳ <b>Remaining:</b> <code>{total_seconds // 86400}d {(total_seconds % 86400)//3600}h {(total_seconds % 3600)//60}m</code>"
+        f"⏳ <b>Remaining:</b> <code>{total_seconds // 86400}d {(total_seconds % 86400)//3600}h {(total_seconds % 3600)//60}m</code>\n"
+        f"📥 <b>Destination Chat:</b> <code>{destination_chat if destination_chat else 'Not set'}</code>"
     )
+    btn = InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Set Destination Chat", callback_data="set_dest_chat")]])
+
+    if MY_PLAN_PIC:
+        return await message.reply_photo(MY_PLAN_PIC, caption=text, reply_markup=btn)
+    await message.reply_text(text, reply_markup=btn)
+
+
+@Client.on_callback_query(filters.regex("^set_dest_chat$"))
+async def set_dest_chat_callback(client, query):
+    if await db.is_banned(query.from_user.id):
+        await query.answer("You are banned from using this bot.", show_alert=True)
+        return
+
+    tier, _ = await db.get_active_tier(query.from_user.id)
+    if tier != "pro_gold":
+        await query.answer("This feature is only for PRO GOLD users. Please upgrade.", show_alert=True)
+        return
+
+    await query.answer()
+    ask_msg = await client.ask(
+        chat_id=query.from_user.id,
+        text="<b>Send the destination channel/chat ID where you want saved content.</b>\n\n"
+             "<b>Important:</b> Bot must be admin there.",
+        filters=filters.text,
+        timeout=180
+    )
+
+    try:
+        destination_chat_id = int(ask_msg.text.strip())
+    except Exception:
+        return await ask_msg.reply_text("❌ <b>Invalid chat ID.</b>")
+
+    me = await client.get_me()
+    try:
+        member = await client.get_chat_member(destination_chat_id, me.id)
+        status = str(getattr(member, "status", "")).lower()
+        allowed = {"administrator", "creator", "chatmemberstatus.administrator", "chatmemberstatus.owner"}
+        if status not in allowed:
+            return await ask_msg.reply_text("❌ <b>Please make the bot admin in that chat, then try again.</b>")
+    except UserNotParticipant:
+        return await ask_msg.reply_text("❌ <b>Bot is not in that chat. Add the bot as admin first.</b>")
+    except Exception as e:
+        return await ask_msg.reply_text(f"❌ <b>Unable to validate chat:</b> <code>{e}</code>")
+
+    await db.set_destination_chat(query.from_user.id, destination_chat_id)
+    await ask_msg.reply_text(f"✅ <b>Destination chat saved:</b> <code>{destination_chat_id}</code>")
 
 
 @Client.on_message(filters.command(["add_premium_pro", "add_premium_gold"]) & filters.private)
@@ -73,11 +126,6 @@ async def add_premium(client, message):
     expiry_text = expires_at.astimezone(IST).strftime("%d %b %Y, %I:%M %p IST")
     await message.reply_text(f"✅ <b>{tier.upper()} activated for</b> <code>{user_id}</code> <b>till</b> <code>{expiry_text}</code>.")
 
-    try:
-        await client.send_message(user_id, f"🎉 <b>Your {tier.upper()} plan is active.</b>\n<b>Expiry:</b> <code>{expiry_text}</code>")
-    except Exception:
-        pass
-
 
 @Client.on_message(filters.command(["removeverifytime"]) & filters.private)
 async def remove_verify_time(client, message):
@@ -92,10 +140,6 @@ async def remove_verify_time(client, message):
 
     await db.reset_verify_time(user_id)
     await message.reply_text(f"✅ <b>Verification reset for</b> <code>{user_id}</code>.")
-    try:
-        await client.send_message(user_id, "ℹ️ <b>Your verification session was reset by admin.</b>\n<b>Please verify again.</b>")
-    except Exception:
-        pass
 
 
 @Client.on_message(filters.command(["remove_premium"]) & filters.private)
@@ -108,7 +152,6 @@ async def remove_premium(client, message):
         user_id = int(message.command[1])
     except ValueError:
         return await message.reply_text("❌ <b>User ID must be numeric.</b>")
-
     await db.remove_premium(user_id)
     await message.reply_text(f"✅ <b>Premium removed for</b> <code>{user_id}</code>.")
 
@@ -123,13 +166,8 @@ async def ban_user(client, message):
         user_id = int(message.command[1])
     except ValueError:
         return await message.reply_text("❌ <b>User ID must be numeric.</b>")
-
     await db.set_ban_status(user_id, True)
     await message.reply_text(f"✅ <b>User banned:</b> <code>{user_id}</code>")
-    try:
-        await client.send_message(user_id, BAN_TEXT)
-    except Exception:
-        pass
 
 
 @Client.on_message(filters.command(["unban"]) & filters.private)
@@ -142,7 +180,6 @@ async def unban_user(client, message):
         user_id = int(message.command[1])
     except ValueError:
         return await message.reply_text("❌ <b>User ID must be numeric.</b>")
-
     await db.set_ban_status(user_id, False)
     await message.reply_text(f"✅ <b>User unbanned:</b> <code>{user_id}</code>")
 

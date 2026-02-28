@@ -37,7 +37,8 @@ class Database:
             premium_expires_at=None,
             batch_daily_count=0,
             batch_daily_date=None,
-            last_save_at=None
+            last_save_at=None,
+            destination_chat_id=None
         )
 
     async def add_user(self, id, name, username):
@@ -181,6 +182,20 @@ class Database:
             {'$set': {'last_save_at': datetime.now(timezone.utc)}},
             upsert=True
         )
+
+
+    async def set_destination_chat(self, id, chat_id):
+        await self.col.update_one(
+            {'id': int(id)},
+            {'$set': {'destination_chat_id': int(chat_id)}},
+            upsert=True
+        )
+
+    async def get_destination_chat(self, id):
+        user = await self.get_user(id)
+        if not user:
+            return None
+        return user.get('destination_chat_id')
 
     async def set_ban_status(self, id, banned: bool):
         await self.col.update_one({'id': int(id)}, {'$set': {'is_banned': bool(banned)}}, upsert=True)
