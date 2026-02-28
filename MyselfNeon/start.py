@@ -21,7 +21,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, 
 from config import (
     API_ID, API_HASH, ERROR_MESSAGE, VERIFY_TUTORIAL, START_PIC, DUMP_CHANNEL,
     FREE_SAVE_COOLDOWN_SECONDS, PRO_DAILY_BATCH_LIMIT, FORCE_SUB_CHANNEL, FORCE_SUB_CHANNEL_URL,
-    FORCE_SUB_PIC, BYPASS_ALERT_PIC, VERIFY_PIC
+    FORCE_SUB_PIC, BYPASS_ALERT_PIC, VERIFY_PIC, AUTO_DELETE_SECONDS
 )
 from database.db import db
 from MyselfNeon.strings import HELP_TXT
@@ -106,6 +106,22 @@ async def check_force_sub(client: Client, message: Message):
             disable_web_page_preview=True
         )
     return False
+
+async def auto_delete_later(client: Client, chat_id: int, message_ids):
+    if not AUTO_DELETE_SECONDS or AUTO_DELETE_SECONDS <= 0:
+        return
+    if not isinstance(message_ids, list):
+        message_ids = [message_ids]
+    await asyncio.sleep(AUTO_DELETE_SECONDS)
+    try:
+        await client.delete_messages(chat_id, message_ids)
+    except Exception:
+        pass
+
+
+def schedule_auto_delete(client: Client, sent_msg: Message):
+    if sent_msg and AUTO_DELETE_SECONDS and AUTO_DELETE_SECONDS > 0:
+        asyncio.create_task(auto_delete_later(client, sent_msg.chat.id, sent_msg.id))
 
 
 # --- Supported Telegram Reactions ---
@@ -395,14 +411,15 @@ async def save(client: Client, message: Message):
                     return
                 
                 try:
-                    # 1. Update Status to Public Detected
-                    await smsg.edit("**__🖇️ Public Link Detected ...__**")
-                    
-                    # 2. Fast Copy to User (ORIGINAL - NO FOOTER)
-                    await client.copy_message(message.chat.id, msg.chat.id, msg.id)
+                    await smsg.edit("**__Downloading 🚀__**")
+                    user_copy = await client.copy_message(message.chat.id, msg.chat.id, msg.id)
+                    await smsg.edit("**__Uploading 📤__**")
+
                     if destination_chat_id:
-                        await client.copy_message(destination_chat_id, msg.chat.id, msg.id)
-                    
+                        await client.copy_message(destination_chat_id, message.chat.id, user_copy.id)
+
+                    schedule_auto_delete(client, user_copy)
+
                     # 3. Send to Dump (WITH FOOTER)
                     if DUMP_CHANNEL:
                         msg_link = f"https://t.me/{username}/{msgid}"
@@ -470,37 +487,45 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
     original_entities = msg.caption_entities if msg.caption_entities else []
     full_dump_text, dump_entities = get_formatted_footer(message, msg_link, original_caption, original_entities)
 
-    if "Text" == msg_type:
-        try:
-            await client.send_message(chat, msg.text, entities=msg.entities)
-            if destination_chat_id:
-                await client.send_message(destination_chat_id, msg.text, entities=msg.entities)
-            if DUMP_CHANNEL:
-                full_text_dump, full_text_entities = get_formatted_footer(message, msg_link, msg.text, msg.entities)
-                await client.send_message(DUMP_CHANNEL, full_text_dump, entities=full_text_entities)
-            if status_msg:
-                await status_msg.delete()
-            return
-        except Exception as e:
-            if ERROR_MESSAGE:
-                await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-            return
-
     if status_msg:
         try:
             smsg = await status_msg.edit('**__Downloading 🚀__**')
-        except:
-            smsg = await client.send_message(message.chat.id, '**__Downloading 🚀__**', reply_to_message_id=message.id)
+        except Exception:
+            smsg = await client.send_message(chat, '**__Downloading 🚀__**', reply_to_message_id=message.id)
     else:
-        smsg = await client.send_message(message.chat.id, '**__Downloading 🚀__**', reply_to_message_id=message.id)
+        smsg = await client.send_message(chat, '**__Downloading 🚀__**', reply_to_message_id=message.id)
+
+    user_sent = None
+
+    if msg_type == "Text":
+        try:
+            await smsg.edit('**__Uploading 📤__**')
+            user_sent = await client.send_message(chat, msg.text, entities=msg.entities)
+            if destination_chat_id:
+                await client.copy_message(destination_chat_id, chat, user_sent.id)
+            schedule_auto_delete(client, user_sent)
+
+            if DUMP_CHANNEL:
+                full_text_dump, full_text_entities = get_formatted_footer(message, msg_link, msg.text, msg.entities)
+                await client.send_message(DUMP_CHANNEL, full_text_dump, entities=full_text_entities)
+            await smsg.delete()
+            return
+        except Exception as e:
+            if ERROR_MESSAGE:
+                err = await client.send_message(chat, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+                schedule_auto_delete(client, err)
+            await smsg.delete()
+            return
 
     asyncio.create_task(downstatus(client, f'{message.id}downstatus.txt', smsg, chat))
     try:
         file = await acc.download_media(msg, progress=progress, progress_args=[message, "down"])
-        os.remove(f'{message.id}downstatus.txt')
+        if os.path.exists(f'{message.id}downstatus.txt'):
+            os.remove(f'{message.id}downstatus.txt')
     except Exception as e:
         if ERROR_MESSAGE:
-            await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+            err = await client.send_message(chat, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+            schedule_auto_delete(client, err)
         return await smsg.delete()
 
     if batch_temp.IS_BATCH.get(message.from_user.id):
@@ -510,81 +535,74 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
     caption = msg.caption if msg.caption else ""
 
     try:
-        if "Document" == msg_type:
+        if msg_type == "Document":
             try:
                 ph_path = await acc.download_media(msg.document.thumbs[0].file_id)
-            except:
+            except Exception:
                 ph_path = None
-            await client.send_document(chat, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
-            if destination_chat_id:
-                await client.send_document(destination_chat_id, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities)
+            user_sent = await client.send_document(chat, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
             if DUMP_CHANNEL:
                 await client.send_document(DUMP_CHANNEL, file, thumb=ph_path, caption=full_dump_text, caption_entities=dump_entities)
             if ph_path:
                 os.remove(ph_path)
 
-        elif "Video" == msg_type:
+        elif msg_type == "Video":
             try:
                 ph_path = await acc.download_media(msg.video.thumbs[0].file_id)
-            except:
+            except Exception:
                 ph_path = None
-            await client.send_video(chat, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
-            if destination_chat_id:
-                await client.send_video(destination_chat_id, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities)
+            user_sent = await client.send_video(chat, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
             if DUMP_CHANNEL:
                 await client.send_video(DUMP_CHANNEL, file, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=full_dump_text, caption_entities=dump_entities)
             if ph_path:
                 os.remove(ph_path)
 
-        elif "Animation" == msg_type:
-            await client.send_animation(chat, file, caption=caption, caption_entities=msg.caption_entities)
-            if destination_chat_id:
-                await client.send_animation(destination_chat_id, file, caption=caption, caption_entities=msg.caption_entities)
+        elif msg_type == "Animation":
+            user_sent = await client.send_animation(chat, file, caption=caption, caption_entities=msg.caption_entities)
             if DUMP_CHANNEL:
                 await client.send_animation(DUMP_CHANNEL, file, caption=full_dump_text, caption_entities=dump_entities)
 
-        elif "Sticker" == msg_type:
-            await client.send_sticker(chat, file)
-            if destination_chat_id:
-                await client.send_sticker(destination_chat_id, file)
+        elif msg_type == "Sticker":
+            user_sent = await client.send_sticker(chat, file)
 
-        elif "Voice" == msg_type:
-            await client.send_voice(chat, file, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
-            if destination_chat_id:
-                await client.send_voice(destination_chat_id, file, caption=caption, caption_entities=msg.caption_entities)
+        elif msg_type == "Voice":
+            user_sent = await client.send_voice(chat, file, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
             if DUMP_CHANNEL:
                 await client.send_voice(DUMP_CHANNEL, file, caption=full_dump_text, caption_entities=dump_entities)
 
-        elif "Audio" == msg_type:
+        elif msg_type == "Audio":
             try:
                 ph_path = await acc.download_media(msg.audio.thumbs[0].file_id)
-            except:
+            except Exception:
                 ph_path = None
-            await client.send_audio(chat, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
-            if destination_chat_id:
-                await client.send_audio(destination_chat_id, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities)
+            user_sent = await client.send_audio(chat, file, thumb=ph_path, caption=caption, caption_entities=msg.caption_entities, progress=progress, progress_args=[message, "up"])
             if DUMP_CHANNEL:
                 await client.send_audio(DUMP_CHANNEL, file, thumb=ph_path, caption=full_dump_text, caption_entities=dump_entities)
             if ph_path:
                 os.remove(ph_path)
 
-        elif "Photo" == msg_type:
-            await client.send_photo(chat, file, caption=caption, caption_entities=msg.caption_entities)
-            if destination_chat_id:
-                await client.send_photo(destination_chat_id, file, caption=caption, caption_entities=msg.caption_entities)
+        elif msg_type == "Photo":
+            user_sent = await client.send_photo(chat, file, caption=caption, caption_entities=msg.caption_entities)
             if DUMP_CHANNEL:
                 await client.send_photo(DUMP_CHANNEL, file, caption=full_dump_text, caption_entities=dump_entities)
 
+        if user_sent and destination_chat_id:
+            await client.copy_message(destination_chat_id, chat, user_sent.id)
+
+        if user_sent:
+            schedule_auto_delete(client, user_sent)
+
     except Exception as e:
         if ERROR_MESSAGE:
-            await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+            err = await client.send_message(chat, f"Error: {e}", reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+            schedule_auto_delete(client, err)
 
     if os.path.exists(f'{message.id}upstatus.txt'):
         os.remove(f'{message.id}upstatus.txt')
-    if os.path.exists(file):
+    if 'file' in locals() and os.path.exists(file):
         os.remove(file)
 
-    await client.delete_messages(message.chat.id, [smsg.id])
+    await client.delete_messages(chat, [smsg.id])
 
 # --- Get message type ---
 def get_message_type(msg: pyrogram.types.messages_and_media.message.Message):

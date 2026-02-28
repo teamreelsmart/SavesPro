@@ -52,6 +52,7 @@ VERIFY_PIC = os.environ.get("VERIFY_PIC", "")
 MY_PLAN_PIC = os.environ.get("MY_PLAN_PIC", "")
 FORCE_SUB_PIC = os.environ.get("FORCE_SUB_PIC", "")
 BYPASS_ALERT_PIC = os.environ.get("BYPASS_ALERT_PIC", "")
+AUTO_DELETE_SECONDS = int(os.environ.get("AUTO_DELETE_SECONDS", "0"))
 
 # -------------------
 # VERIFICATION CONFIG
